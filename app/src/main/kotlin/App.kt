@@ -1,15 +1,24 @@
+import java.io.PrintWriter
 import java.net.ServerSocket;
 
+const val LINE_BREAK = "\r\n" // Carriage return + line feed (CRLF)
+
 fun main() {
-    // You can use print statements as follows for debugging, they'll be visible when running tests.
-    println("Logs from your program will appear here!")
+    val serverSocket = ServerSocket(4221)
 
-    var serverSocket = ServerSocket(4221)
-
+    //#region Socket Options
     // Since the tester restarts your program quite often, setting SO_REUSEADDR
     // ensures that we don't run into 'Address already in use' errors
     serverSocket.reuseAddress = true
+    //#endregion
 
-    serverSocket.accept() // Wait for connection from client.
+    val clientSocket = serverSocket.accept() // Wait for connection from client.
     println("accepted new connection")
+    val writer = PrintWriter(clientSocket.getOutputStream(), true)
+
+    val response = """
+        HTTP/1.1 200 OK$LINE_BREAK
+    """.trimIndent()
+
+    writer.println(response)
 }
