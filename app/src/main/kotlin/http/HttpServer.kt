@@ -10,9 +10,10 @@ import java.io.BufferedWriter
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.ServerSocket
+import kotlinx.coroutines.*
 
 class HttpServer(private val port: Int) {
-    val serverSocket = ServerSocket(port)
+    val server = ServerSocket(port)
     var handlerMap = mutableMapOf<Pair<HttpMethod, String>, HttpHandler>()
 
     companion object Parser {
@@ -59,78 +60,81 @@ class HttpServer(private val port: Int) {
     /**
      * Starts the HTTP server to listen for incoming connections.
      */
-    fun start() {
-        //#region Socket Options
-        // Since the tester restarts your program quite often, setting SO_REUSEADDR
-        // ensures that we don't run into 'Address already in use' errors
-        serverSocket.reuseAddress = true
-        //#endregion
-        println("listening on port $port")
+    fun start() = runBlocking {
+        server.use { serverSocket ->
+            //#region Socket Options
+            // Since the tester restarts your program quite often, setting SO_REUSEADDR
+            // ensures that we don't run into 'Address already in use' errors
+            serverSocket.reuseAddress = true
+            //#endregion
+            println("listening on port $port")
 
-        while (true) {
-            val clientSocket = serverSocket.accept() // Wait for connection from client.
+            while (true) {
+                val socket = serverSocket.accept()
+                launch(Dispatchers.IO) {
+                    socket.use { clientSocket ->
+                        // Set up input and output streams
+                        val readerIn = BufferedReader(InputStreamReader(clientSocket.getInputStream()))
+                        val writerOut = BufferedWriter(OutputStreamWriter(clientSocket.getOutputStream()))
 
-            // Set up input and output streams
-            val readerIn = BufferedReader(InputStreamReader(clientSocket.getInputStream()))
-            val writerOut = BufferedWriter(OutputStreamWriter(clientSocket.getOutputStream()))
+                        val requestLine = Parser.parseRequestLine(readerIn.readLine())
+                        var headerLines: MutableList<String> = mutableListOf()
+                        var lineBuffer: String?
+                        while (readerIn.readLine().also { lineBuffer = it } != null && lineBuffer!!.isNotEmpty()) {
+                            headerLines.add(lineBuffer!!) // Read headers until an empty line is encountered
+                        }
 
-            val requestLine = Parser.parseRequestLine(readerIn.readLine())
-            var headerLines: MutableList<String> = mutableListOf()
-            var lineBuffer: String?
-            while (readerIn.readLine().also { lineBuffer = it } != null && lineBuffer!!.isNotEmpty()) {
-                headerLines.add(lineBuffer!!) // Read headers until an empty line is encountered
-            }
+                        val contentLength =
+                            headerLines.find { it.startsWith("Content-Length:") }?.split(":")?.get(1)?.trim()?.toIntOrNull()
+                                ?: 0
+                        var bodyBuilder = StringBuilder() // Read body based on Content-Length
+                        when {
+                            contentLength > 0 -> {
+                                val bodyBuffer = CharArray(contentLength)
+                                readerIn.read(bodyBuffer, 0, contentLength)
+                                bodyBuilder.append(bodyBuffer)
+                            }
 
-            val contentLength =
-                headerLines.find { it.startsWith("Content-Length:") }?.split(":")?.get(1)?.trim()?.toIntOrNull() ?: 0
-            var bodyBuilder = StringBuilder() // Read body based on Content-Length
-            when {
-                contentLength > 0 -> {
-                    val bodyBuffer = CharArray(contentLength)
-                    readerIn.read(bodyBuffer, 0, contentLength)
-                    bodyBuilder.append(bodyBuffer)
-                }
+                            else -> {
+                                // No `body` to read
+                                println("No body to read")
+                            }
+                        }
 
-                else -> {
-                    // No `body` to read
-                    println("No body to read")
-                }
-            }
+                        val httpRequest = HttpRequest(
+                            requestLine = requestLine,
+                            headers = Parser.parseHeaders(headerLines),
+                            body = bodyBuilder.toString()
+                        )
+                        val httpResponse = HttpResponse()
 
-            val httpRequest = HttpRequest(
-                requestLine = requestLine,
-                headers = Parser.parseHeaders(headerLines),
-                body = bodyBuilder.toString()
-            )
-            val httpResponse = HttpResponse()
+                        // build response, using handler callbacks
+                        val response = when {
+                            httpRequest.getMethod() != null && httpRequest.getPath() != null &&
+                                    handlerExists(httpRequest.getMethod()!!, httpRequest.getPath()!!) -> {
+                                val handler = getHandler(httpRequest.getMethod()!!, httpRequest.getPath()!!)
 
-            // build response, using handler callbacks
-            val response = when {
-                httpRequest.getMethod() != null && httpRequest.getPath() != null &&
-                        this.handlerExists(httpRequest.getMethod()!!, httpRequest.getPath()!!) -> {
-                    val handler = this.getHandler(httpRequest.getMethod()!!, httpRequest.getPath()!!)
+                                if (handler != null) {
+                                    handler(httpRequest, httpResponse)
+                                } else {
+                                    internalErrorHandler(httpResponse)
+                                }
+                            }
 
-                    if (handler != null) {
-                        handler(httpRequest, httpResponse)
-                    } else {
-                        internalErrorHandler(httpResponse)
+                            else -> {
+                                resourceNotFoundHandler(httpResponse)
+                            }
+                        }
+
+                        val rawResponse = response.build()
+                        writerOut.write(rawResponse)
+                        writerOut.flush() // Ensure all data is sent out
+
+                        println("handled new connection")
                     }
                 }
-
-                else -> {
-                    resourceNotFoundHandler(httpResponse)
-                }
             }
-
-            val rawResponse = response.build()
-            writerOut.write(rawResponse)
-            writerOut.flush() // Ensure all data is sent out
-
-            println("accepted new connection")
-            clientSocket.close()
         }
-
-        serverSocket.close()
     }
 
     /**
