@@ -34,66 +34,19 @@ data class HttpRequestLine(
     }
 }
 
-class HttpRequest(private val requestData: String) {
-    private var headers = mutableMapOf<String, String>()
-    private var body = StringBuilder()
-    private var method: String? = null
-    private var path: String? = null
-    private var httpVersion: String? = null
-
-    init {
-        // Parse the request data here if needed
-        val requestChunks = requestData.split(LINE_BREAK)
-        val requestLine = requestChunks.get(0) // Request line
-
-        val requestLineParts = requestLine.split(" ")
-        if (requestLineParts.size >= 3) {
-            method = requestLineParts[0]
-            path = requestLineParts[1]
-            httpVersion = requestLineParts[2]
-        }
-
-        // header/body separator index
-        val separatorIndex = requestChunks.indexOfFirst { it.isEmpty() }
-        val headerParts = if (separatorIndex > 0) requestChunks.slice(1 until separatorIndex) else emptyList()
-        this.headers = headerParts.filter { it.contains(": ") }.associate { line ->
-            val (key, value) = line.split(": ", limit = 2)
-            key.trim() to value.trim()
-        }.toMutableMap()
-
-        if (separatorIndex >= 0 && separatorIndex < requestChunks.size - 1) {
-            val bodyParts = requestChunks.slice(separatorIndex + 1 until requestChunks.size)
-            bodyParts.forEach { line ->
-                this.body.append(line).append(LINE_BREAK)
-            }
-        }
-    }
-
+class HttpRequest(private val requestLine: HttpRequestLine, val headers: Map<String, String>, val body: String) {
     /**
      * Converts the method string to HttpMethod enum.
      */
     fun getMethod(): HttpMethod? {
-        return when (method) {
-            "GET" -> HttpMethod.GET
-            "POST" -> HttpMethod.POST
-            "PUT" -> HttpMethod.PUT
-            "DELETE" -> HttpMethod.DELETE
-            "PATCH" -> HttpMethod.PATCH
-            "OPTIONS" -> HttpMethod.OPTIONS
-            "HEAD" -> HttpMethod.HEAD
-            else -> null
-        }
+        return this.requestLine.method
     }
 
     /**
      * Returns the requested path.
      */
     fun getPath(): String? {
-        return path
-    }
-
-    fun getBody(): String {
-        return body.toString()
+        return this.requestLine.path
     }
 }
 
@@ -146,11 +99,8 @@ class ResponseBuilder {
 fun main() {
     val server = HttpServer(PORT)
 
-    server.addHandler(HttpMethod.GET, "/", { request, response ->
-        println(request.getBody())
-
-        response
-    })
+    // Setup handlers
+    server.addHandler(HttpMethod.GET, "/", { _, response -> response })
 
     server.start()
 }
@@ -209,12 +159,9 @@ class HttpServer(private val port: Int) {
         while (true) {
             val clientSocket = serverSocket.accept() // Wait for connection from client.
 
-            val readerIn = BufferedReader(
-                InputStreamReader(clientSocket.getInputStream())
-            )
-            val writerOut = BufferedWriter(
-                OutputStreamWriter(clientSocket.getOutputStream())
-            )
+            // Set up input and output streams
+            val readerIn = BufferedReader(InputStreamReader(clientSocket.getInputStream()))
+            val writerOut = BufferedWriter(OutputStreamWriter(clientSocket.getOutputStream()))
 
             val requestLine = Parsers.parseRequestLine(readerIn.readLine())
             var headerLines: MutableList<String> = mutableListOf()
@@ -225,22 +172,25 @@ class HttpServer(private val port: Int) {
 
             val contentLength =
                 headerLines.find { it.startsWith("Content-Length:") }?.split(":")?.get(1)?.trim()?.toIntOrNull() ?: 0
+            var bodyBuilder = StringBuilder() // Read body based on Content-Length
             when {
                 contentLength > 0 -> {
                     val bodyBuffer = CharArray(contentLength)
                     readerIn.read(bodyBuffer, 0, contentLength)
-
-                    println("Body: " + String(bodyBuffer))
+                    bodyBuilder.append(bodyBuffer)
                 }
 
                 else -> {
-                    // No body to read
+                    // No `body` to read
                     println("No body to read")
                 }
             }
 
-            val rawRequest = readerIn.readLine()
-            val httpRequest = HttpRequest(rawRequest)
+            val httpRequest = HttpRequest(
+                requestLine = requestLine,
+                headers = Parsers.parseHeaders(headerLines),
+                body = bodyBuilder.toString()
+            )
             val responseBuilder = ResponseBuilder()
 
             // build response, using handler callbacks
@@ -271,23 +221,38 @@ class HttpServer(private val port: Int) {
         serverSocket.close()
     }
 
+    /**
+     * Handles resource not found errors.
+     */
     private fun resourceNotFoundHandler(responseBuilder: ResponseBuilder): ResponseBuilder {
         return responseBuilder.setStatus(404).setBody("404 Not Found").setHeader("Content-Type", "text/plain")
     }
 
+    /**
+     * Handles internal server errors.
+     */
     private fun internalErrorHandler(responseBuilder: ResponseBuilder): ResponseBuilder {
         return responseBuilder.setStatus(500).setBody("500 Internal Server Error")
             .setHeader("Content-Type", "text/plain")
     }
 
+    /**
+     * Adds a handler for the specified HTTP method and path.
+     */
     fun addHandler(method: HttpMethod, path: String, handler: (HttpRequest, ResponseBuilder) -> ResponseBuilder) {
         handlerMap[Pair(method, path)] = handler
     }
 
+    /**
+     * Checks if a handler exists for the given method and path.
+     */
     private fun handlerExists(method: HttpMethod, path: String): Boolean {
         return handlerMap.containsKey(Pair(method, path))
     }
 
+    /**
+     * Retrieves the handler for the given method and path.
+     */
     private fun getHandler(method: HttpMethod, path: String): ((HttpRequest, ResponseBuilder) -> ResponseBuilder)? {
         return handlerMap[Pair(method, path)]
     }
