@@ -24,6 +24,14 @@ fun main() {
 
         response
     })
+    server.addHandler(HttpMethod.GET, "/user-agent", { request, response ->
+        val userAgent = request.getHeader("User-Agent") ?: "Unknown"
+        response
+            .setHeader("Content-Type", "text/plain")
+            .setBody(userAgent)
+
+        response
+    })
 
     server.start()
 }

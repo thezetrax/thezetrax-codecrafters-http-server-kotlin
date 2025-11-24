@@ -152,7 +152,7 @@ class HttpServer(private val port: Int) {
      * Adds a handler for the specified HTTP method and path.
      * @throws IllegalArgumentException if a handler already exists for the given method and path.
      */
-    fun addHandler(method: HttpMethod, path: String, handler: (HttpRequest, HttpResponse) -> HttpResponse) {
+    fun addHandler(method: HttpMethod, path: String, handler: HttpHandler) {
         if (this.handlerExists(method, path)) {
             throw IllegalArgumentException("Handler already exists for path: $path")
         }

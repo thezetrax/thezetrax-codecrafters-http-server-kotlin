@@ -16,4 +16,11 @@ class HttpRequest(private val requestLine: HttpRequestLine, val headers: Map<Str
     fun getPath(): String? {
         return this.requestLine.path
     }
+
+    /**
+     * Finds header value by its name.
+     */
+    fun getHeader(headerName: String): String? {
+        return this.headers[headerName]
+    }
 }
