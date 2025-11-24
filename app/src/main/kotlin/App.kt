@@ -4,6 +4,8 @@ import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.ServerSocket;
 
+typealias HttpHandler = (HttpRequest, HttpResponse) -> HttpResponse
+
 const val LINE_BREAK = "\r\n" // Carriage return + line feed (CRLF)
 const val PORT = 4221
 
@@ -50,7 +52,7 @@ class HttpRequest(private val requestLine: HttpRequestLine, val headers: Map<Str
     }
 }
 
-class ResponseBuilder {
+class HttpResponse {
     private val headers = mutableMapOf<String, String>()
     private var body: String = ""
     private var status: Int = 200
@@ -66,17 +68,17 @@ class ResponseBuilder {
             else -> "Unknown Status"
         }
 
-    fun setHeader(key: String, value: String): ResponseBuilder {
+    fun setHeader(key: String, value: String): HttpResponse {
         headers[key] = value
         return this
     }
 
-    fun setBody(body: String): ResponseBuilder {
+    fun setBody(body: String): HttpResponse {
         this.body = body
         return this
     }
 
-    fun setStatus(status: Int): ResponseBuilder {
+    fun setStatus(status: Int): HttpResponse {
         this.status = status
         return this
     }
@@ -101,13 +103,29 @@ fun main() {
 
     // Setup handlers
     server.addHandler(HttpMethod.GET, "/", { _, response -> response })
+    server.addHandler(HttpMethod.GET, "/echo/*", { request, response ->
+        val endpoint = "/echo"
+        val path = request.getPath()
+        val msgStartIndex = path?.lastIndexOf(endpoint)
+        val msg = if (msgStartIndex != null && msgStartIndex +  endpoint.length < path.length) {
+            path.substring(msgStartIndex + endpoint.length).trimStart('/')
+        } else {
+            ""
+        }
+
+        response
+            .setHeader("Content-Type", "text/plain")
+            .setBody(msg)
+
+        response
+    })
 
     server.start()
 }
 
 class HttpServer(private val port: Int) {
     val serverSocket = ServerSocket(port)
-    var handlerMap = mutableMapOf<Pair<HttpMethod, String>, (HttpRequest, ResponseBuilder) -> ResponseBuilder>()
+    var handlerMap = mutableMapOf<Pair<HttpMethod, String>, HttpHandler>()
 
     object Parsers {
         /**
@@ -148,6 +166,9 @@ class HttpServer(private val port: Int) {
         }
     }
 
+    /**
+     * Starts the HTTP server to listen for incoming connections.
+     */
     fun start() {
         //#region Socket Options
         // Since the tester restarts your program quite often, setting SO_REUSEADDR
@@ -191,7 +212,7 @@ class HttpServer(private val port: Int) {
                 headers = Parsers.parseHeaders(headerLines),
                 body = bodyBuilder.toString()
             )
-            val responseBuilder = ResponseBuilder()
+            val httpResponse = HttpResponse()
 
             // build response, using handler callbacks
             val response = when {
@@ -200,18 +221,19 @@ class HttpServer(private val port: Int) {
                     val handler = this.getHandler(httpRequest.getMethod()!!, httpRequest.getPath()!!)
 
                     if (handler != null) {
-                        handler(httpRequest, responseBuilder)
+                        handler(httpRequest, httpResponse)
                     } else {
-                        internalErrorHandler(responseBuilder)
+                        internalErrorHandler(httpResponse)
                     }
                 }
 
                 else -> {
-                    resourceNotFoundHandler(responseBuilder)
+                    resourceNotFoundHandler(httpResponse)
                 }
             }
 
-            writerOut.write(response.build())
+            val rawResponse = response.build()
+            writerOut.write(rawResponse)
             writerOut.flush() // Ensure all data is sent out
 
             println("accepted new connection")
@@ -224,22 +246,26 @@ class HttpServer(private val port: Int) {
     /**
      * Handles resource not found errors.
      */
-    private fun resourceNotFoundHandler(responseBuilder: ResponseBuilder): ResponseBuilder {
-        return responseBuilder.setStatus(404).setBody("404 Not Found").setHeader("Content-Type", "text/plain")
+    private fun resourceNotFoundHandler(httpResponse: HttpResponse): HttpResponse {
+        return httpResponse.setStatus(404).setBody("404 Not Found").setHeader("Content-Type", "text/plain")
     }
 
     /**
      * Handles internal server errors.
      */
-    private fun internalErrorHandler(responseBuilder: ResponseBuilder): ResponseBuilder {
-        return responseBuilder.setStatus(500).setBody("500 Internal Server Error")
+    private fun internalErrorHandler(httpResponse: HttpResponse): HttpResponse {
+        return httpResponse.setStatus(500).setBody("500 Internal Server Error")
             .setHeader("Content-Type", "text/plain")
     }
 
     /**
      * Adds a handler for the specified HTTP method and path.
+     * @throws IllegalArgumentException if a handler already exists for the given method and path.
      */
-    fun addHandler(method: HttpMethod, path: String, handler: (HttpRequest, ResponseBuilder) -> ResponseBuilder) {
+    fun addHandler(method: HttpMethod, path: String, handler: (HttpRequest, HttpResponse) -> HttpResponse) {
+        if (this.handlerExists(method, path)) {
+            throw IllegalArgumentException("Handler already exists for path: $path")
+        }
         handlerMap[Pair(method, path)] = handler
     }
 
@@ -247,13 +273,31 @@ class HttpServer(private val port: Int) {
      * Checks if a handler exists for the given method and path.
      */
     private fun handlerExists(method: HttpMethod, path: String): Boolean {
-        return handlerMap.containsKey(Pair(method, path))
+        val normalizedPath = this.normalizePath(path)
+        return handlerMap.any { (metadata, _) ->
+            val (handlerMethod, handlerPath) = metadata.first to this.normalizePath(metadata.second)
+
+            handlerMethod == method && (handlerPath == normalizedPath || handlerPath.endsWith("*") && normalizedPath.startsWith(
+                this.normalizePath(handlerPath.removeSuffix("*"))
+            ))
+        }
     }
 
     /**
      * Retrieves the handler for the given method and path.
      */
-    private fun getHandler(method: HttpMethod, path: String): ((HttpRequest, ResponseBuilder) -> ResponseBuilder)? {
-        return handlerMap[Pair(method, path)]
+    private fun getHandler(method: HttpMethod, path: String): HttpHandler? {
+        val normalizedPath = this.normalizePath(path)
+        return handlerMap.entries
+            .find { entry ->
+                val (handlerMethod, handlerPath) = entry.key.first to this.normalizePath(entry.key.second)
+
+                handlerMethod == method && (handlerPath == normalizedPath || handlerPath.endsWith("*") && normalizedPath.startsWith(
+                    this.normalizePath(handlerPath.removeSuffix("*"))
+                ))
+            }?.value
     }
+
+    // Normalizes the path by removing trailing slashes.
+    private fun normalizePath(path: String): String = path.trimEnd('/')
 }
