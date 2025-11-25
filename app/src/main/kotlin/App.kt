@@ -14,7 +14,7 @@ fun main(args: Array<String>) {
     }
 
     server.addMiddleware { req, res ->
-        val contentEncoding = req.getHeader("Content-Encoding")
+        val contentEncoding = req.getHeader("Accept-Encoding")
         if (contentEncoding != null)
             res.setHeader("Content-Encoding", contentEncoding)
 
