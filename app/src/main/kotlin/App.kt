@@ -14,13 +14,26 @@ fun main(args: Array<String>) {
     }
 
     server.addMiddleware { req, res ->
-        val acceptEncoding = req.getHeader("Accept-Encoding")
+        val acceptEncodings: List<String> = req.getHeader("Accept-Encoding").let {
+            it?.split(",")
+        }
             ?: return@addMiddleware res
 
-        when (acceptEncoding) {
-            "invalid-encoding" -> res
-            else -> res.setHeader("Content-Encoding", acceptEncoding)
+        val supportedEncodings = listOf("gzip", "deflate", "br", "identity")
+
+        for (encoding in acceptEncodings) {
+            val trimmedEncoding = encoding.trim()
+            when {
+                trimmedEncoding in supportedEncodings -> {
+                    res.setHeader("Content-Encoding", trimmedEncoding)
+                }
+//                trimmedEncoding.startsWith("invalid-encoding") -> {
+//                    return@addMiddleware res
+//                }
+            }
         }
+
+        res
     }
 
     // Setup handlers
