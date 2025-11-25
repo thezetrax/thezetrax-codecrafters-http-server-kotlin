@@ -14,12 +14,13 @@ fun main(args: Array<String>) {
     }
 
     server.addMiddleware { req, res ->
-        val contentEncoding = req.getHeader("Accept-Encoding")
-        if (contentEncoding != null)
-            res.setHeader("Content-Encoding", contentEncoding)
+        val acceptEncoding = req.getHeader("Accept-Encoding")
+            ?: return@addMiddleware res
 
-        println("Middleware Received: ${req.getMethod()} request for ${req.getPath()}")
-        res
+        when (acceptEncoding) {
+            "invalid-encoding" -> res
+            else -> res.setHeader("Content-Encoding", acceptEncoding)
+        }
     }
 
     // Setup handlers
@@ -74,6 +75,7 @@ fun main(args: Array<String>) {
                     .setHeader("Content-Type", "application/octet-stream")
                     .setBody(fileContents)
             }
+
             else -> {
                 response
                     .setStatus(404)
@@ -111,6 +113,7 @@ fun main(args: Array<String>) {
                     .setHeader("Content-Type", "text/plain")
                     .setBody("File created/overwritten successfully")
             }
+
             else -> {
                 response
                     .setStatus(400)
