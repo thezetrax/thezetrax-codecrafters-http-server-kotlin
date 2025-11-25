@@ -39,7 +39,7 @@ fun main(args: Array<String>) {
 
         response
     }
-    server.addHandler(HttpMethod.GET, "/file/*") { request, response ->
+    server.addHandler(HttpMethod.GET, "/files/*") { request, response ->
         if (rootDirPath == null) {
             response
                 .setStatus(400)
@@ -48,7 +48,7 @@ fun main(args: Array<String>) {
             return@addHandler response
         }
 
-        val endpoint = "/file"
+        val endpoint = "/files"
         val path = request.getPath()
         val filePathStartIndex = path?.lastIndexOf(endpoint)
         val fileName = if (filePathStartIndex != null && filePathStartIndex + endpoint.length < path.length) {
@@ -57,16 +57,20 @@ fun main(args: Array<String>) {
             ""
         }
 
-        if (fileName.isNotEmpty()) {
-            val fileContents = File("$rootDirPath/$fileName").readText()
-            response
-                .setHeader("Content-Type", "text/plain")
-                .setBody(fileContents)
-        } else {
-            response
-                .setStatus(400)
-                .setHeader("Content-Type", "text/plain")
-                .setBody("File name not specified.")
+        var file: File? = null
+        when {
+            fileName.isNotEmpty() && File("$rootDirPath/$fileName").also { file = it }.exists() -> {
+                val fileContents = file!!.readText()
+                response
+                    .setHeader("Content-Type", "application/octet-stream")
+                    .setBody(fileContents)
+            }
+            else -> {
+                response
+                    .setStatus(400)
+                    .setHeader("Content-Type", "text/plain")
+                    .setBody("File does not exist")
+            }
         }
 
         response
