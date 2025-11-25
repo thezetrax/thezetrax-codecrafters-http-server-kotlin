@@ -67,7 +67,7 @@ fun main(args: Array<String>) {
             }
             else -> {
                 response
-                    .setStatus(400)
+                    .setStatus(404)
                     .setHeader("Content-Type", "text/plain")
                     .setBody("File does not exist")
             }
