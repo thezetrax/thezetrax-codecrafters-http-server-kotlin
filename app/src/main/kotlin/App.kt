@@ -13,6 +13,15 @@ fun main(args: Array<String>) {
         null
     }
 
+    server.addMiddleware { req, res ->
+        val contentEncoding = req.getHeader("Content-Encoding")
+        if (contentEncoding != null)
+            res.setHeader("Content-Encoding", contentEncoding)
+
+        println("Middleware Received: ${req.getMethod()} request for ${req.getPath()}")
+        res
+    }
+
     // Setup handlers
     server.addHandler(HttpMethod.GET, "/") { _, response -> response }
     server.addHandler(HttpMethod.GET, "/echo/*") { request, response ->
@@ -75,7 +84,6 @@ fun main(args: Array<String>) {
 
         response
     }
-
     server.addHandler(HttpMethod.POST, "/files/*") { request, response ->
         val body = request.body
         if (rootDirPath == null) {

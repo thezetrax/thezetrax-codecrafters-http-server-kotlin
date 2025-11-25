@@ -5,6 +5,7 @@ import http.models.HttpRequestLine
 import http.models.HttpResponse
 import http.types.HttpHandler
 import http.types.HttpMethod
+import http.types.Middleware
 import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.io.InputStreamReader
@@ -13,8 +14,9 @@ import java.net.ServerSocket
 import kotlinx.coroutines.*
 
 class HttpServer(private val port: Int) {
-    val serverSocket = ServerSocket(port)
-    var handlerMap = mutableMapOf<Pair<HttpMethod, String>, HttpHandler>()
+    private val serverSocket = ServerSocket(port)
+    private var handlerMap = mutableMapOf<Pair<HttpMethod, String>, HttpHandler>()
+    private var middlewareList = mutableListOf<Middleware>()
 
     companion object Parser {
         const val LINE_BREAK = "\r\n"
@@ -68,6 +70,7 @@ class HttpServer(private val port: Int) {
         //#endregion
         println("listening on port $port")
 
+        // Main server loop to accept incoming connections
         while (true) {
             val socket = serverSocket.accept()
             launch(Dispatchers.IO) {
@@ -114,7 +117,9 @@ class HttpServer(private val port: Int) {
                             val handler = getHandler(httpRequest.getMethod()!!, httpRequest.getPath()!!)
 
                             if (handler != null) {
-                                handler(httpRequest, httpResponse)
+                                middlewareList.fold(httpResponse) { response, middleware ->
+                                    middleware(httpRequest, response)
+                                }.let { res -> handler(httpRequest, res) }
                             } else {
                                 internalErrorHandler(httpResponse)
                             }
@@ -160,6 +165,10 @@ class HttpServer(private val port: Int) {
             throw IllegalArgumentException("Handler already exists for path: $path")
         }
         handlerMap[Pair(method, path)] = handler
+    }
+
+    fun addMiddleware(middleware: Middleware) {
+        middlewareList.add(middleware)
     }
 
     /**
