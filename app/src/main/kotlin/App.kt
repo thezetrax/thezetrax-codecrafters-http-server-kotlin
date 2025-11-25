@@ -99,6 +99,7 @@ fun main(args: Array<String>) {
                 file = File("$rootDirPath/$fileName")
                 file.writeText(body ?: "")
                 response
+                    .setStatus(201)
                     .setHeader("Content-Type", "text/plain")
                     .setBody("File created/overwritten successfully")
             }
