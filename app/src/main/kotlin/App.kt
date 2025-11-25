@@ -76,6 +76,43 @@ fun main(args: Array<String>) {
         response
     }
 
+    server.addHandler(HttpMethod.POST, "/files/*") { request, response ->
+        val body = request.body
+        if (rootDirPath == null) {
+            response
+                .setStatus(400)
+                .setHeader("Content-Type", "text/plain")
+                .setBody("File serving directory not specified.")
+            return@addHandler response
+        }
+        val endpoint = "/files"
+        val path = request.getPath()
+        val filePathStartIndex = path?.lastIndexOf(endpoint)
+        val fileName = if (filePathStartIndex != null && filePathStartIndex + endpoint.length < path.length) {
+            path.substring(filePathStartIndex + endpoint.length).trimStart('/')
+        } else {
+            ""
+        }
+        var file: File? = null
+        when {
+            fileName.isNotEmpty() -> {
+                file = File("$rootDirPath/$fileName")
+                file.writeText(body ?: "")
+                response
+                    .setHeader("Content-Type", "text/plain")
+                    .setBody("File created/overwritten successfully")
+            }
+            else -> {
+                response
+                    .setStatus(400)
+                    .setHeader("Content-Type", "text/plain")
+                    .setBody("Invalid file name")
+            }
+        }
+
+        response
+    }
+
     server.start()
 }
 
