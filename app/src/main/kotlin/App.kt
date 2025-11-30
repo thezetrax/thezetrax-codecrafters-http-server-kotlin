@@ -1,4 +1,6 @@
-import http.HttpServer
+import http.compression.HttpCompression
+import http.compression.CompressionAlgorithm
+import http.models.HttpBody
 import http.types.HttpMethod
 import java.io.File
 
@@ -13,23 +15,36 @@ fun main(args: Array<String>) {
         null
     }
 
-    server.addMiddleware { req, res ->
+    server.addPostMiddleware { req, res ->
         val acceptEncodings: List<String> = req.getHeader("Accept-Encoding").let {
             it?.split(",")
         }
-            ?: return@addMiddleware res
+            ?: return@addPostMiddleware res
 
-        val supportedEncodings = listOf("gzip", "deflate", "br", "identity")
+        val supportedEncodings = listOf("gzip")
 
         for (encoding in acceptEncodings) {
             val trimmedEncoding = encoding.trim()
             when {
                 trimmedEncoding in supportedEncodings -> {
-                    res.setHeader("Content-Encoding", trimmedEncoding)
+                    when (trimmedEncoding) {
+                        "gzip" -> {
+                            val compressedBody =
+                                (res.body as HttpBody.StringBody).content?.let { content ->
+                                    HttpCompression.compress(content, CompressionAlgorithm.GZIP)
+                                }
+
+                            if (compressedBody != null) {
+                                res
+                                    .setHeader("Content-Encoding", "gzip")
+                                    .setBody(compressedBody)
+                            } else {
+                                res
+                            }
+                        }
+                    }
                 }
-//                trimmedEncoding.startsWith("invalid-encoding") -> {
-//                    return@addMiddleware res
-//                }
+//              trimmedEncoding.startsWith("invalid-encoding") -> return@addMiddleware res
             }
         }
 

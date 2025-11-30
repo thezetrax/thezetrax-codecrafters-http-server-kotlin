@@ -1,11 +1,14 @@
 package http.models
 
-import http.HttpServer
+sealed class HttpBody {
+    data class StringBody(val content: String) : HttpBody()
+    data class ByteArrayBody(val content: ByteArray) : HttpBody()
+}
 
 class HttpResponse {
     private val headers = mutableMapOf<String, String>()
-    private var body: String = ""
-    private var status: Int = 200
+    var body: HttpBody = HttpBody.StringBody("")
+    var status: Int = 200
     private val phrase: String
         get() = when (status) {
             200 -> "OK"
@@ -23,8 +26,12 @@ class HttpResponse {
         return this
     }
 
+    fun setBody(body: ByteArray): HttpResponse {
+        this.body = HttpBody.ByteArrayBody(body)
+        return this
+    }
     fun setBody(body: String): HttpResponse {
-        this.body = body
+        this.body = HttpBody.StringBody(body)
         return this
     }
 
@@ -34,15 +41,18 @@ class HttpResponse {
     }
 
     fun build(): String {
-        val length: Int = body.length
+        val length: Int = when (body) {
+            is HttpBody.StringBody -> (body as HttpBody.StringBody).content.length
+            is HttpBody.ByteArrayBody -> (body as HttpBody.ByteArrayBody).content.size
+        }
+
         val stringBuilder = StringBuilder()
-        stringBuilder.append("HTTP/1.1 $status $phrase").append(HttpServer.Parser.LINE_BREAK)
+        stringBuilder.append("HTTP/1.1 $status $phrase").append(HttpServer.LINE_BREAK)
         headers["Content-Length"] = length.toString()
         for ((key, value) in headers) {
-            stringBuilder.append("$key: $value").append(HttpServer.Parser.LINE_BREAK)
+            stringBuilder.append("$key: $value").append(HttpServer.LINE_BREAK)
         }
-        stringBuilder.append(HttpServer.Parser.LINE_BREAK) // Blank line between headers and body
-        stringBuilder.append(body)
+        stringBuilder.append(HttpServer.LINE_BREAK) // Blank line between headers and body
 
         return stringBuilder.toString()
     }

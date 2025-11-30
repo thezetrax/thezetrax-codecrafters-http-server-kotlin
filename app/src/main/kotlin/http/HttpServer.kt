@@ -1,5 +1,4 @@
-package http
-
+import http.models.HttpBody
 import http.models.HttpRequest
 import http.models.HttpRequestLine
 import http.models.HttpResponse
@@ -16,7 +15,8 @@ import kotlinx.coroutines.*
 class HttpServer(private val port: Int) {
     private val serverSocket = ServerSocket(port)
     private var handlerMap = mutableMapOf<Pair<HttpMethod, String>, HttpHandler>()
-    private var middlewareList = mutableListOf<Middleware>()
+    private var preMiddlewareList = mutableListOf<Middleware>()
+    private var postMiddlewareList = mutableListOf<Middleware>()
 
     companion object Parser {
         const val LINE_BREAK = "\r\n"
@@ -30,12 +30,9 @@ class HttpServer(private val port: Int) {
             val requestLineParts = requestLine.split(" ")
             if (requestLineParts.size >= 3) {
                 return HttpRequestLine.fromString(
-                    method = requestLineParts[0],
-                    path = requestLineParts[1],
-                    httpVersion = requestLineParts[2]
+                    method = requestLineParts[0], path = requestLineParts[1], httpVersion = requestLineParts[2]
                 )
-            } else
-                throw IllegalArgumentException("Invalid HTTP request line")
+            } else throw IllegalArgumentException("Invalid HTTP request line")
         }
 
         fun parseHeaders(headerLines: List<String>): Map<String, String> {
@@ -77,7 +74,8 @@ class HttpServer(private val port: Int) {
                 socket.use { clientSocket ->
                     // Set up input and output streams
                     val readerIn = BufferedReader(InputStreamReader(clientSocket.getInputStream()))
-                    val writerOut = BufferedWriter(OutputStreamWriter(clientSocket.getOutputStream()))
+                    // val writerOut = BufferedWriter(OutputStreamWriter(clientSocket.getOutputStream()))
+                    val writerOut = clientSocket.getOutputStream()
 
                     val requestLine = Parser.parseRequestLine(readerIn.readLine())
                     var headerLines: MutableList<String> = mutableListOf()
@@ -112,14 +110,22 @@ class HttpServer(private val port: Int) {
 
                     // build response, using handler callbacks
                     val response = when {
-                        httpRequest.getMethod() != null && httpRequest.getPath() != null &&
-                                handlerExists(httpRequest.getMethod()!!, httpRequest.getPath()!!) -> {
+                        httpRequest.getMethod() != null && httpRequest.getPath() != null && handlerExists(
+                            httpRequest.getMethod()!!,
+                            httpRequest.getPath()!!
+                        ) -> {
                             val handler = getHandler(httpRequest.getMethod()!!, httpRequest.getPath()!!)
 
                             if (handler != null) {
-                                middlewareList.fold(httpResponse) { response, middleware ->
-                                    middleware(httpRequest, response)
-                                }.let { res -> handler(httpRequest, res) }
+                                preMiddlewareList.fold(httpResponse) { preResponse, preMiddleware ->
+                                    preMiddleware(httpRequest, preResponse)
+                                }.let { res ->
+                                    handler(httpRequest, res).let { res ->
+                                        postMiddlewareList.fold(res) { postResponse, postMiddleware ->
+                                            postMiddleware(httpRequest, postResponse)
+                                        }
+                                    }
+                                }
                             } else {
                                 internalErrorHandler(httpResponse)
                             }
@@ -131,7 +137,13 @@ class HttpServer(private val port: Int) {
                     }
 
                     val rawResponse = response.build()
-                    writerOut.write(rawResponse)
+                    writerOut.write(rawResponse.toByteArray())
+                    when (response.body) {
+                        is HttpBody.StringBody -> writerOut.write(
+                            (response.body as HttpBody.StringBody).content.toByteArray())
+                        is HttpBody.ByteArrayBody -> clientSocket.getOutputStream()
+                            .write((response.body as HttpBody.ByteArrayBody).content)
+                    }
                     writerOut.flush() // Ensure all data is sent out
 
                     println("handled new connection")
@@ -152,8 +164,7 @@ class HttpServer(private val port: Int) {
      * Handles internal server errors.
      */
     private fun internalErrorHandler(httpResponse: HttpResponse): HttpResponse {
-        return httpResponse.setStatus(500).setBody("500 Internal Server Error")
-            .setHeader("Content-Type", "text/plain")
+        return httpResponse.setStatus(500).setBody("500 Internal Server Error").setHeader("Content-Type", "text/plain")
     }
 
     /**
@@ -168,7 +179,11 @@ class HttpServer(private val port: Int) {
     }
 
     fun addMiddleware(middleware: Middleware) {
-        middlewareList.add(middleware)
+        preMiddlewareList.add(middleware)
+    }
+
+    fun addPostMiddleware(middleware: Middleware) {
+        postMiddlewareList.add(middleware)
     }
 
     /**
@@ -190,8 +205,7 @@ class HttpServer(private val port: Int) {
      */
     private fun getHandler(method: HttpMethod, path: String): HttpHandler? {
         val normalizedPath = this.normalizePath(path)
-        return handlerMap.entries
-            .find { entry ->
+        return handlerMap.entries.find { entry ->
                 val (handlerMethod, handlerPath) = entry.key.first to this.normalizePath(entry.key.second)
 
                 handlerMethod == method && (handlerPath == normalizedPath || handlerPath.endsWith("*") && normalizedPath.startsWith(
